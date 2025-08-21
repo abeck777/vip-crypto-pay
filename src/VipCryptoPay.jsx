@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import './VipCryptoPay.css';
 
-const COINGECKO_IDS = { BTC:'bitcoin', ETH:'ethereum', USDT:'tether', USDC:'usd-coin', XRP:'ripple', LTC:'litecoin', DOGE:'dogecoin', ADA:'cardano' };
+const COINGECKO_IDS = { BTC:'bitcoin', ETH:'ethereum', USDT:'tether', USDC:'usd-coin', XRP:'ripple', LTC:'litecoin', DOGE:'dogecoin', ADA:'cardano', SOL:'solana' };
 const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price';
 
 function qs() {
