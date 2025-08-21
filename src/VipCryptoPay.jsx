@@ -17,6 +17,26 @@ function qs() {
   };
 }
 
+function buildFailUrl({ baseFail, orderId, reason }) {
+  const base = baseFail || '/zahlung-fehlgeschlagen';
+  try {
+    const u = new URL(base, window.location.origin);
+    if (orderId) u.searchParams.set('orderId', orderId);
+    if (reason)  u.searchParams.set('reason', reason);
+    return u.toString();
+  } catch {
+    // falls base bereits absolute URL ist
+    try {
+      const u = new URL(base);
+      if (orderId) u.searchParams.set('orderId', orderId);
+      if (reason)  u.searchParams.set('reason', reason);
+      return u.toString();
+    } catch {
+      return `${base}?orderId=${encodeURIComponent(orderId||'')}&reason=${encodeURIComponent(reason||'')}`;
+    }
+  }
+}
+
 function VipCryptoPay() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -35,32 +55,65 @@ function VipCryptoPay() {
   useEffect(() => {
     (async () => {
       if (!params.orderId || !params.token || !params.amountEur) {
-        window.location.href = params.fail || '/zahlung-fehlgeschlagen';
+        window.location.href = buildFailUrl({
+          baseFail: params.fail,
+          orderId: params.orderId,
+          reason: 'missing_params'
+        });
         return;
       }
+
       try {
-        const r = await fetch('https://www.goldsilverstuff.com/_functions/vipinit', {
-          method:'POST', headers:{ 'Content-Type':'application/json' },
+        const url = 'https://www.goldsilverstuff.com/_functions/vipinit?dbg=1';
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
           body: JSON.stringify({
             orderId: params.orderId,
             token: params.token,
-            amountEur: params.amountEur,
-            presetCoin: params.coin || null
+            amountEur: Number(params.amountEur),
+            presetCoin: params.coin || null,
+            dbg: 1
           })
         });
-        const j = await r.json();
-        if (!r.ok || !j?.ok) throw new Error(j?.error || 'init failed');
 
+        let j = null, txt = '';
+        try { j = await r.json(); } catch { try { txt = await r.text(); } catch(_){} }
+
+        if (!r.ok || !j?.ok) {
+          const reason = (j && (j.error || j.message)) || (txt && txt.slice(0,120)) || `vipinit_${r.status}`;
+          // diag nur in Konsole, nicht in URL
+          console.warn('[VIP] vipinit failed', { status: r.status, reason, diag: j?.diag });
+          window.location.href = buildFailUrl({
+            baseFail: params.fail,
+            orderId: params.orderId,
+            reason
+          });
+          return;
+        }
+
+        // Erfolg
         setCustomerData({ name: j.name || '', email: j.email || '' });
-        setWalletMap(j.walletMap || {});
-        setAllowedCoins(j.allowedCoins || []);
-        const pre = (params.coin || j.presetCoin || j.allowedCoins?.[0] || 'BTC').toUpperCase();
+        const wallets = j.walletMap || {};
+        const allowed = j.allowedCoins || [];
+        setWalletMap(wallets);
+        setAllowedCoins(allowed);
+
+        // Vorwahl robust: nur Coin verwenden, der wirklich erlaubt ist
+        const preWanted = (params.coin || j.presetCoin || '').toUpperCase();
+        const pre =
+          (preWanted && allowed.includes(preWanted)) ? preWanted :
+          (allowed[0] || 'BTC');
         setSelectedCoin(pre);
 
         setLoading(false);
       } catch (e) {
-        console.error('vipinit fail', e);
-        window.location.href = params.fail || '/zahlung-fehlgeschlagen';
+        console.error('[VIP] vipinit network error', e);
+        window.location.href = buildFailUrl({
+          baseFail: params.fail,
+          orderId: params.orderId,
+          reason: 'vipinit_network'
+        });
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -114,29 +167,36 @@ function VipCryptoPay() {
       alert('Kundendaten fehlen.');
       return;
     }
-    const wallet = walletMap[selectedCoin];
-    if (!wallet) {
-      alert('Keine VIP Wallet für diesen Coin konfiguriert.');
+    if (!selectedCoin || !allowedCoins.includes(selectedCoin)) {
+      alert('Bitte einen gültigen VIP-Coin auswählen.');
       return;
     }
+    const wallet = walletMap[selectedCoin];
+    if (!wallet) {
+      alert(`Keine VIP Wallet für ${selectedCoin} konfiguriert.`);
+      return;
+    }
+
     setOverlay(true);
     try {
       const r = await fetch('https://www.goldsilverstuff.com/_functions/vipnotify', {
-        method:'POST', headers:{ 'Content-Type':'application/json' },
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({
           orderId: params.orderId,
           token: params.token,
           coin: selectedCoin,
           amountEur: Number(params.amountEur),
           wallet,
-          isBeratung: !!isBeratung
+          isBeratung: !!isBeratung,
+          dbg: 1
         })
       });
-      if (!r.ok) throw new Error('notify failed');
+      if (!r.ok) throw new Error(`notify_${r.status}`);
       if (isBeratung) window.open('https://meet.jit.si/GoldSilverSupport', '_blank');
-      // overlay bleibt, bis Admin entscheidet
+      // overlay bleibt bis Admin entscheidet
     } catch (e) {
-      console.error(e);
+      console.error('[VIP] vipnotify error', e);
       setOverlay(false);
       alert('Konnte Benachrichtigung nicht senden.');
     }
