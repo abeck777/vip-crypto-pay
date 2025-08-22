@@ -55,65 +55,51 @@ function VipCryptoPay() {
   useEffect(() => {
     (async () => {
       if (!params.orderId || !params.token || !params.amountEur) {
-        window.location.href = buildFailUrl({
-          baseFail: params.fail,
-          orderId: params.orderId,
-          reason: 'missing_params'
-        });
+        window.location.href = (params.fail ? `${params.fail}&reason=vipinit_params` : '/zahlung-fehlgeschlagen');
         return;
       }
 
       try {
-        const url = 'https://www.goldsilverstuff.com/_functions/vipinit?dbg=1';
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify({
-            orderId: params.orderId,
-            token: params.token,
-            amountEur: Number(params.amountEur),
-            presetCoin: params.coin || null,
-            dbg: 1
-          })
+        const u = new URL('https://www.goldsilverstuff.com/_functions/vipinit');
+        u.search = new URLSearchParams({
+          orderId: params.orderId,
+          token: params.token,
+          amountEur: String(params.amountEur),
+          presetCoin: params.coin || ''
+        }).toString();
+
+        const r = await fetch(u.toString(), {
+          method: 'GET',
+          mode: 'cors',
+          cache: 'no-store'
         });
 
-        let j = null, txt = '';
-        try { j = await r.json(); } catch { try { txt = await r.text(); } catch(_){} }
+        // Nur für Debug: Status sichtbar machen
+        console.log('[VIPINIT] status', r.status);
 
+        const j = await r.json().catch(() => ({}));
         if (!r.ok || !j?.ok) {
-          const reason = (j && (j.error || j.message)) || (txt && txt.slice(0,120)) || `vipinit_${r.status}`;
-          // diag nur in Konsole, nicht in URL
-          console.warn('[VIP] vipinit failed', { status: r.status, reason, diag: j?.diag });
-          window.location.href = buildFailUrl({
-            baseFail: params.fail,
-            orderId: params.orderId,
-            reason
-          });
-          return;
+          console.error('[VIPINIT] bad response', { status: r.status, j });
+          throw new Error(j?.error || `bad_status_${r.status}`);
         }
 
         // Erfolg
         setCustomerData({ name: j.name || '', email: j.email || '' });
-        const wallets = j.walletMap || {};
+        setWalletMap(j.walletMap || {});
         const allowed = j.allowedCoins || [];
-        setWalletMap(wallets);
-        setAllowedCoins(allowed);
+        setAllowedCoins(allowed)
 
         // Vorwahl robust: nur Coin verwenden, der wirklich erlaubt ist
-        const preWanted = (params.coin || j.presetCoin || '').toUpperCase();
-        const pre =
-          (preWanted && allowed.includes(preWanted)) ? preWanted :
-          (allowed[0] || 'BTC');
-        setSelectedCoin(pre);
+        const wanted = (params.coin || j.presetCoin || '').toUpperCase();
+        const initial = wanted && allowed.includes(wanted) ? wanted : (allowed[0] || 'BTC');
+        setSelectedCoin(initial);
 
         setLoading(false);
       } catch (e) {
-        console.error('[VIP] vipinit network error', e);
-        window.location.href = buildFailUrl({
-          baseFail: params.fail,
-          orderId: params.orderId,
-          reason: 'vipinit_network'
-        });
+        console.error('[VIPINIT] network/error', e);
+        const reason = (e && e.message) ? e.message.slice(0,60) : 'vipinit_network';
+        const failUrl = params.fail ? `${params.fail}&reason=${encodeURIComponent(reason)}` : '/zahlung-fehlgeschlagen';
+        window.location.href = failUrl;
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
