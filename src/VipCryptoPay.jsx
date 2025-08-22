@@ -51,6 +51,13 @@ function VipCryptoPay() {
 
   const params = qs();
 
+  const COIN_DECIMALS = { BTC:8, ETH:6, LTC:6, SOL:4, ADA:2, DOGE:2, XRP:2, USDT:2, USDC:2 };
+  const fmtAmount = (a, sym) => {
+    if (a == null || !isFinite(a)) return '–';
+    const d = COIN_DECIMALS[sym] ?? 6;
+    return a.toFixed(d).replace(/\.?0+$/,'');
+  };
+
   // Init von Wix holen
   useEffect(() => {
     (async () => {
@@ -165,20 +172,30 @@ function VipCryptoPay() {
 
     setOverlay(true);
     try {
+      const payload = {
+        orderId: params.orderId,
+        token: params.token,
+        coin: selectedCoin,
+        amountEur: Number(params.amountEur),
+        wallet,
+        isBeratung: !!isBeratung,
+        dbg: 1
+      };
+
+      // WICHTIG: text/plain -> kein Preflight, Backend parst ohnehin JSON aus Text.
       const r = await fetch('https://www.goldsilverstuff.com/_functions/vipnotify', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({
-          orderId: params.orderId,
-          token: params.token,
-          coin: selectedCoin,
-          amountEur: Number(params.amountEur),
-          wallet,
-          isBeratung: !!isBeratung,
-          dbg: 1
-        })
+        method: 'POST',
+        mode: 'cors',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
       });
-      if (!r.ok) throw new Error(`notify_${r.status}`);
+
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        throw new Error(`notify_${r.status}_${txt.slice(0,120)}`);
+      }
+
       if (isBeratung) window.open('https://meet.jit.si/GoldSilverSupport', '_blank');
       // overlay bleibt bis Admin entscheidet
     } catch (e) {
@@ -191,7 +208,7 @@ function VipCryptoPay() {
   if (loading) return <div className="vip-wrapper">Lade…</div>;
 
   const walletAddr = walletMap[selectedCoin] || '';
-
+  const coinAmount = priceEur ? (Number(params.amountEur) / priceEur) : null;
   return (
     <div className="vip-wrapper">
       <img src="/logo.png" alt="Logo" className="logo" />
@@ -217,6 +234,12 @@ function VipCryptoPay() {
         alt="QR Code"
         className="vip-qr"
       />
+
+      <div className="vip-amount">
+        {priceEur !== null
+          ? <>Zu senden: <b>{fmtAmount(coinAmount, selectedCoin)}</b> {selectedCoin} (~{Number(params.amountEur).toFixed(2)} €)</>
+          : 'Zu senden: …'}
+      </div>
 
       <div className="vip-timer">Verbleibende Zeit: {formatTime(timeLeft)}</div>
 
