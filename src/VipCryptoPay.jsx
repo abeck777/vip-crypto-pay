@@ -57,9 +57,8 @@ function VipCryptoPay() {
     return a.toFixed(d).replace(/\.?0+$/,'');
   };
 
-  // --- Polling Setup (Kunde wartet auf Admin-Entscheid) ---
+  // --- Polling Setup ---
   const pollRef = useRef(null);
-
   const checkStatus = async () => {
     try {
       const u = new URL('https://www.goldsilverstuff.com/_functions/order');
@@ -68,7 +67,6 @@ function VipCryptoPay() {
       if (!r.ok) return;
       const j = await r.json();
       const st = String(j?.status || '').toLowerCase();
-
       if (st === 'paid') {
         const target = params.success || '/zahlung-erfolgreich';
         const url = new URL(target, window.location.origin);
@@ -82,53 +80,40 @@ function VipCryptoPay() {
       }
     } catch (_) {}
   };
-
   const startPolling = () => {
     if (pollRef.current) return;
     pollRef.current = setInterval(checkStatus, 3000);
   };
+  useEffect(() => () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } }, []);
 
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    };
-  }, []);
-
-  // --- Init von Wix holen ---
+  // --- Init ---
   useEffect(() => {
     (async () => {
       if (!params.orderId || !params.token || !params.amountEur) {
         window.location.href = (params.fail ? `${params.fail}&reason=vipinit_params` : '/zahlung-fehlgeschlagen');
         return;
       }
-
       try {
         const u = new URL('https://www.goldsilverstuff.com/_functions/vipinit');
         u.search = new URLSearchParams({
-          orderId: params.orderId,
-          token: params.token,
+          orderId: params.orderId, token: params.token,
           amountEur: String(params.amountEur),
           presetCoin: params.coin || ''
         }).toString();
-
         const r = await fetch(u.toString(), { method: 'GET', mode: 'cors', cache: 'no-store' });
         console.log('[VIPINIT] status', r.status);
-
         const j = await r.json().catch(() => ({}));
         if (!r.ok || !j?.ok) {
           console.error('[VIPINIT] bad response', { status: r.status, j });
           throw new Error(j?.error || `bad_status_${r.status}`);
         }
-
         setCustomerData({ name: j.name || '', email: j.email || '' });
         setWalletMap(j.walletMap || {});
         const allowed = j.allowedCoins || [];
         setAllowedCoins(allowed);
-
         const wanted = (params.coin || j.presetCoin || '').toUpperCase();
         const initial = wanted && allowed.includes(wanted) ? wanted : (allowed[0] || 'BTC');
         setSelectedCoin(initial);
-
         setLoading(false);
       } catch (e) {
         console.error('[VIPINIT] network/error', e);
@@ -169,7 +154,6 @@ function VipCryptoPay() {
     }
     setRefreshing(false);
   };
-
   useEffect(() => {
     if (!selectedCoin) return;
     fetchPrice(selectedCoin);
@@ -209,8 +193,7 @@ function VipCryptoPay() {
         isBeratung: !!isBeratung,
         dbg: 1
       };
-
-      // text/plain vermeidet Preflight; Backend parst ohnehin JSON
+      // text/plain vermeidet Preflight
       const r = await fetch('https://www.goldsilverstuff.com/_functions/vipnotify', {
         method: 'POST',
         mode: 'cors',
@@ -218,13 +201,23 @@ function VipCryptoPay() {
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify(payload)
       });
-
       if (!r.ok) {
         const txt = await r.text().catch(() => '');
         throw new Error(`notify_${r.status}_${txt.slice(0,120)}`);
       }
 
-      if (isBeratung) window.open('https://meet.jit.si/GoldSilverSupport', '_blank');
+      // NEU: direkt öffnen, wenn isBeratung=true und Backend URL liefert
+      if (isBeratung) {
+        let out = null;
+        try { out = await r.json(); } catch(_){}
+        const direct = out?.jitsi?.guestUrl;
+        if (direct) {
+          window.open(direct, '_blank');   // Variante B: direkt in den Warteraum
+        } else {
+          // Fallback (für den Fall, dass Token fehlte oder Secret nicht gesetzt)
+          window.open('https://meet.goldsilverstuff.com', '_blank');
+        }
+      }
 
       // Ab hier auf Admin-Entscheidung warten → Poll starten
       startPolling();
